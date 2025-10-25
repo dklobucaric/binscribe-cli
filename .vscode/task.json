@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build BinScribe CLI",
+      "type": "shell",
+      "command": "g++",
+      "args": [
+        "-std=c++17",
+        "binscribe-cli.cpp",
+        "-o",
+        "binscribe-cli.exe"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    }
+  ]
+}

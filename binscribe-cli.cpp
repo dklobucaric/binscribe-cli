@@ -3,17 +3,22 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <cctype>
+#include <utility>
 
 // -----------------------------------------------------------------------------
-// BinScribe CLI v0.1
+// BinScribe CLI v0.2
 // Minimal, single-file, cross-platform, zero dependencies.
+// Now with interactive mode.
 // -----------------------------------------------------------------------------
 
-static const std::string VERSION = "0.1";
-static const std::string APPNAME = "BinScribe CLI";
+static const std::string VERSION  = "0.2";
+static const std::string APPNAME  = "BinScribe CLI";
+static const std::string COPYRIGHT =
+    "© 2025 Dalibor Klobučarić\nLicense: MIT\n";
 
-// Convert a single byte (unsigned char) to an 8-bit "01010101" string
+// ---------- Conversion helpers ------------------------------------------------
+
+// Convert one byte (unsigned char) to 8-bit "01010101"
 std::string byteToBinary(unsigned char c) {
     std::string out;
     out.reserve(8);
@@ -23,7 +28,7 @@ std::string byteToBinary(unsigned char c) {
     return out;
 }
 
-// Convert full text into space-separated 8-bit binary chunks
+// Convert full text to space-separated 8-bit binary tokens
 std::string textToBinary(const std::string& input) {
     std::ostringstream oss;
     for (size_t i = 0; i < input.size(); ++i) {
@@ -36,8 +41,8 @@ std::string textToBinary(const std::string& input) {
     return oss.str();
 }
 
-// Helper: convert "01000001" -> one byte (as char)
-// Returns pair<success?,charValue>
+// Convert "01000001" -> char
+// returns {success, char}
 std::pair<bool, char> binary8ToChar(const std::string& bits) {
     if (bits.size() != 8) {
         return {false, 0};
@@ -52,7 +57,7 @@ std::pair<bool, char> binary8ToChar(const std::string& bits) {
     return {true, static_cast<char>(value)};
 }
 
-// Convert space/newline separated 8-bit binary chunks into text
+// Convert binary tokens (space/newline separated 8-bit groups) to text
 std::string binaryToText(const std::string& input, bool& ok) {
     ok = true;
     std::istringstream iss(input);
@@ -70,7 +75,8 @@ std::string binaryToText(const std::string& input, bool& ok) {
     return out.str();
 }
 
-// Read whole file into string (binary-safe-ish for text use)
+// ---------- File helpers ------------------------------------------------------
+
 bool readFile(const std::string& path, std::string& outData) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
@@ -80,7 +86,6 @@ bool readFile(const std::string& path, std::string& outData) {
     return true;
 }
 
-// Write whole string to file
 bool writeFile(const std::string& path, const std::string& data) {
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
@@ -88,13 +93,14 @@ bool writeFile(const std::string& path, const std::string& data) {
     return true;
 }
 
+// ---------- Presentation / UX helpers ----------------------------------------
+
 void printAbout() {
     std::cout
         << APPNAME << " v" << VERSION << "\n"
         << "Lightweight cross-platform CLI utility that converts text <-> binary (0s and 1s).\n"
         << "No external dependencies. Single-file build.\n"
-        << "© 2025 Dalibor Klobučarić\n"
-        << "License: MIT\n";
+        << COPYRIGHT;
 }
 
 void printUsage() {
@@ -103,29 +109,126 @@ void printUsage() {
         << "Usage:\n"
         << "  binscribe-cli --about\n"
         << "  binscribe-cli --encode <input.txt> <output.bin>\n"
-        << "  binscribe-cli --decode <input.bin> <output.txt>\n\n"
+        << "  binscribe-cli --decode <input.bin> <output.txt>\n"
+        << "  binscribe-cli            (interactive mode)\n\n"
         << "Description:\n"
         << "  --about    Show version and credits\n"
         << "  --encode   Read plain text and write binary (space-separated 8-bit chunks)\n"
-        << "  --decode   Read binary 0/1 chunks and write plain text\n";
+        << "  --decode   Read 0/1 chunks and write plain text\n"
+        << "  no args    Start interactive menu\n";
 }
 
+// We ask user for a line like "path/to/file" safely
+std::string askPath(const std::string& prompt) {
+    std::string p;
+    std::cout << prompt;
+    std::getline(std::cin, p);
+    return p;
+}
+
+// ---------- Core actions ------------------------------------------------------
+
+bool doEncodeFile(const std::string& inPath, const std::string& outPath) {
+    std::string plain;
+    if (!readFile(inPath, plain)) {
+        std::cerr << "[ERROR] Cannot read input file: " << inPath << "\n";
+        return false;
+    }
+
+    std::string binData = textToBinary(plain);
+
+    if (!writeFile(outPath, binData)) {
+        std::cerr << "[ERROR] Cannot write output file: " << outPath << "\n";
+        return false;
+    }
+
+    std::cout << "[OK] Encoded " << inPath << " -> " << outPath << "\n";
+    return true;
+}
+
+bool doDecodeFile(const std::string& inPath, const std::string& outPath) {
+    std::string binData;
+    if (!readFile(inPath, binData)) {
+        std::cerr << "[ERROR] Cannot read input file: " << inPath << "\n";
+        return false;
+    }
+
+    bool ok = false;
+    std::string plain = binaryToText(binData, ok);
+    if (!ok) {
+        std::cerr << "[ERROR] Input is not valid 8-bit binary chunks.\n";
+        return false;
+    }
+
+    if (!writeFile(outPath, plain)) {
+        std::cerr << "[ERROR] Cannot write output file: " << outPath << "\n";
+        return false;
+    }
+
+    std::cout << "[OK] Decoded " << inPath << " -> " << outPath << "\n";
+    return true;
+}
+
+// ---------- Interactive mode --------------------------------------------------
+
+void runInteractive() {
+    while (true) {
+        std::cout << "\n"
+            << "=====================================\n"
+            << APPNAME << " v" << VERSION << "\n"
+            << "1) Encode file (text -> binary)\n"
+            << "2) Decode file (binary -> text)\n"
+            << "3) About\n"
+            << "0) Exit\n"
+            << "-------------------------------------\n"
+            << "Choice: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) {
+            // input stream closed or error
+            std::cout << "\n[INFO] Input closed. Exiting.\n";
+            return;
+        }
+
+        if (choice == "0") {
+            std::cout << "Goodbye.\n";
+            return;
+        }
+        else if (choice == "1") {
+            std::string inPath  = askPath("Input text file : ");
+            std::string outPath = askPath("Output binary file: ");
+            doEncodeFile(inPath, outPath);
+        }
+        else if (choice == "2") {
+            std::string inPath  = askPath("Input binary file : ");
+            std::string outPath = askPath("Output text file   : ");
+            doDecodeFile(inPath, outPath);
+        }
+        else if (choice == "3") {
+            printAbout();
+        }
+        else {
+            std::cout << "[WARN] Invalid choice.\n";
+        }
+    }
+}
+
+// ---------- main() -----------------------------------------------------------
+
 int main(int argc, char* argv[]) {
-    // No args -> show usage
+    // no args -> interactive mode
     if (argc < 2) {
-        printUsage();
+        runInteractive();
         return 0;
     }
 
     std::string cmd = argv[1];
 
-    // binscribe-cli --about
     if (cmd == "--about") {
         printAbout();
         return 0;
     }
 
-    // binscribe-cli --encode input.txt output.bin
     if (cmd == "--encode") {
         if (argc < 4) {
             std::cerr << "[ERROR] Missing arguments.\n\n";
@@ -134,25 +237,9 @@ int main(int argc, char* argv[]) {
         }
         std::string inPath = argv[2];
         std::string outPath = argv[3];
-
-        std::string plain;
-        if (!readFile(inPath, plain)) {
-            std::cerr << "[ERROR] Cannot read input file: " << inPath << "\n";
-            return 1;
-        }
-
-        std::string binData = textToBinary(plain);
-
-        if (!writeFile(outPath, binData)) {
-            std::cerr << "[ERROR] Cannot write output file: " << outPath << "\n";
-            return 1;
-        }
-
-        std::cout << "[OK] Encoded " << inPath << " -> " << outPath << "\n";
-        return 0;
+        return doEncodeFile(inPath, outPath) ? 0 : 1;
     }
 
-    // binscribe-cli --decode input.bin output.txt
     if (cmd == "--decode") {
         if (argc < 4) {
             std::cerr << "[ERROR] Missing arguments.\n\n";
@@ -161,30 +248,10 @@ int main(int argc, char* argv[]) {
         }
         std::string inPath = argv[2];
         std::string outPath = argv[3];
-
-        std::string binData;
-        if (!readFile(inPath, binData)) {
-            std::cerr << "[ERROR] Cannot read input file: " << inPath << "\n";
-            return 1;
-        }
-
-        bool ok = false;
-        std::string plain = binaryToText(binData, ok);
-        if (!ok) {
-            std::cerr << "[ERROR] Input is not valid 8-bit binary chunks.\n";
-            return 1;
-        }
-
-        if (!writeFile(outPath, plain)) {
-            std::cerr << "[ERROR] Cannot write output file: " << outPath << "\n";
-            return 1;
-        }
-
-        std::cout << "[OK] Decoded " << inPath << " -> " << outPath << "\n";
-        return 0;
+        return doDecodeFile(inPath, outPath) ? 0 : 1;
     }
 
-    // Unknown command
+    // unknown arg
     std::cerr << "[ERROR] Unknown command: " << cmd << "\n\n";
     printUsage();
     return 1;
